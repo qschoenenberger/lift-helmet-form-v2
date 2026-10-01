@@ -333,6 +333,11 @@
     h1{font-size:28px;}
     .model-tab-btn{font-size:15px;padding:12px;}
   }
+  #updateBar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:99;background:var(--gold);color:var(--on-accent);
+    font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:16px;
+    padding:14px 16px;text-align:center;cursor:pointer;}
+  #updateBar.show{display:block;}
+  @media print{#updateBar{display:none !important;}}
 </style>
 </head>
 <body>
@@ -1334,7 +1339,7 @@
     </div>
   </form>
 
-  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.3</span></footer>
+  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.4</span></footer>
 </div>
 
 <script>
@@ -1797,16 +1802,23 @@ function exitPrintLayout(){
   printHidden.forEach(el => el.classList.remove('print-hide'));
   printHidden = [];
   document.body.classList.remove('print-layout');
-  document.querySelector('.wrap').style.zoom = '';
+  document.querySelectorAll('.wrap, header.masthead, .model-panel, .info-section').forEach(el => { el.style.zoom = ''; });
 }
 // Browser Print / Save as PDF: shrink each page's content to fit if needed
 window.addEventListener('beforeprint', () => {
   enterPrintLayout();
   const wrap = document.querySelector('.wrap');
-  const split = document.querySelector('.info-section').getBoundingClientRect().top - wrap.getBoundingClientRect().top;
-  const h1 = split, h2 = wrap.offsetHeight - split;
-  const fit = Math.min(1, 940 / h1, 940 / h2);   // 10in printable height = 960px
-  if(fit < 1) wrap.style.zoom = fit;
+  const info = document.querySelector('.info-section');
+  const h1 = info.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+  const h2 = info.offsetHeight + 4;
+  const PAGE_H = 930;                              // 10in printable height = 960px, minus a safety gap
+  const fit = h => Math.max(0.8, Math.min(1, PAGE_H / h));   // never below 80%: a very long build flows to an extra page instead
+  const f1 = fit(h1), f2 = fit(h2);
+  if(f1 < 1){
+    document.querySelector('header.masthead').style.zoom = f1;
+    document.querySelector('.model-panel.active').style.zoom = f1;
+  }
+  if(f2 < 1) info.style.zoom = f2;
 });
 window.addEventListener('afterprint', exitPrintLayout);
 
@@ -2177,6 +2189,25 @@ copyBtn.addEventListener('click', function(){
     setTimeout(() => copyBtn.textContent = 'Copy Summary', 1800);
   });
 });
+</script>
+<div id="updateBar" role="button" tabindex="0">A newer version of this form is available &mdash; tap to update</div>
+<script>
+// Tells people on an old cached copy (e.g. a tab left open on a phone) to refresh
+(function(){
+  const BUILD = '2026-10-01.4';
+  const bar = document.getElementById('updateBar');
+  bar.addEventListener('click', () => location.reload());
+  async function check(){
+    if(!/^https?:$/.test(location.protocol)) return;
+    try {
+      const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+      const m = (await r.text()).match(/const BUILD = '([^']+)'/);
+      if(m && m[1] !== BUILD) bar.classList.add('show');
+    } catch(e) {}
+  }
+  check();
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) check(); });
+})();
 </script>
 </body>
 </html>
