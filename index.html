@@ -316,8 +316,25 @@
   body.print-layout .totals-row.grand{font-size:22px;padding-top:10px;}
   body.print-layout .totals-row.order-total{font-size:20px;}
   /* PDF frame only: each PDF page is rendered on its own, so the page break needs no measuring */
-  body.pdf-p1 .info-section{display:none !important;}
-  body.pdf-p2 header.masthead, body.pdf-p2 .model-panel{display:none !important;}
+  /* ONE-PAGE sheet: everything on a single Letter page. JS widens the layout just enough to fit. */
+  body.print-layout.pdf-one .info-section{break-before:auto;page-break-before:auto;margin-top:10px;padding-top:10px;border-top:2px solid var(--gold);}
+  body.print-layout.pdf-one .item-grid, body.pdf-one .item-grid.cols-2, body.pdf-one .item-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
+  body.print-layout.pdf-one .calc-section{margin-bottom:8px;}
+  body.print-layout.pdf-one .item-row{padding:3px 8px;gap:7px;}
+  body.print-layout.pdf-one .subgroup-label{margin:2px 0 0;padding-top:3px;}
+  body.print-layout.pdf-one header.masthead{padding:0 0 6px;margin-bottom:8px;}
+  body.print-layout.pdf-one .rep-row{margin-top:4px;}
+  body.print-layout.pdf-one .grid2{grid-template-columns:1fr 1fr 1fr 1fr;gap:4px 12px;}
+  body.print-layout.pdf-one .field{margin-bottom:4px;}
+  body.print-layout.pdf-one .field.full{grid-column:1/-1;}
+  body.print-layout.pdf-one .grid2 .field:nth-child(-n+4){grid-column:span 2;}
+  body.print-layout.pdf-one input[type=text], body.pdf-one input[type=email], body.pdf-one input[type=tel], body.pdf-one textarea{padding:5px 9px;}
+  body.print-layout.pdf-one textarea{min-height:34px;}
+  body.print-layout.pdf-one label.flabel{margin-bottom:3px;}
+  body.print-layout.pdf-one .totals-box{padding:8px 16px;margin-top:8px;}
+  body.print-layout.pdf-one .totals-row{padding:3px 0;}
+  body.print-layout.pdf-one .totals-row.grand{padding-top:6px;margin-top:4px;font-size:20px;}
+  body.print-layout.pdf-one .totals-row.order-total{font-size:18px;}
   /* keep the desktop column layout in print/PDF even when the screen is narrow */
   body.print-layout .item-grid.cols-2{grid-template-columns:1fr 1fr;}
   body.print-layout .item-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
@@ -1339,7 +1356,7 @@
     </div>
   </form>
 
-  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.4</span></footer>
+  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.5</span></footer>
 </div>
 
 <script>
@@ -1794,33 +1811,39 @@ function applyPrintLayout(doc){
       });
     });
   }
-  doc.body.classList.add('print-layout');
+  doc.body.classList.add('print-layout', 'pdf-one');
   return hidden;
 }
 function enterPrintLayout(){ printHidden = applyPrintLayout(document); }
 function exitPrintLayout(){
   printHidden.forEach(el => el.classList.remove('print-hide'));
   printHidden = [];
-  document.body.classList.remove('print-layout');
-  document.querySelectorAll('.wrap, header.masthead, .model-panel, .info-section').forEach(el => { el.style.zoom = ''; });
+  document.body.classList.remove('print-layout', 'pdf-one');
+  const w = document.querySelector('.wrap');
+  w.style.zoom = ''; w.style.width = '';
 }
 // Browser Print / Save as PDF: shrink each page's content to fit if needed
 window.addEventListener('beforeprint', () => {
   enterPrintLayout();
   const wrap = document.querySelector('.wrap');
-  const info = document.querySelector('.info-section');
-  const h1 = info.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
-  const h2 = info.offsetHeight + 4;
-  const PAGE_H = 930;                              // 10in printable height = 960px, minus a safety gap
-  const fit = h => Math.max(0.8, Math.min(1, PAGE_H / h));   // never below 80%: a very long build flows to an extra page instead
-  const f1 = fit(h1), f2 = fit(h2);
-  if(f1 < 1){
-    document.querySelector('header.masthead').style.zoom = f1;
-    document.querySelector('.model-panel.active').style.zoom = f1;
-  }
-  if(f2 < 1) info.style.zoom = f2;
+  const W = fitOnePageWidth(wrap);                 // layout width (px) that makes everything fit one page
+  wrap.style.width = W + 'px';
+  // scale to the 7.5in printable width, or smaller if the height would still spill onto a second page
+  wrap.style.zoom = Math.min(720 / W, 885 / wrap.offsetHeight);
 });
 window.addEventListener('afterprint', exitPrintLayout);
+
+// Finds the narrowest layout width (px) at which the whole form fits on ONE Letter page at that scale.
+// Wider layout = more columns = shorter, but smaller text, so we use the least width that works.
+const ONE_PAGE_RATIO = 1.28;                       // printable height / width (10in x 7.5in, minus a safety gap)
+function fitOnePageWidth(wrap){
+  let W = 720;
+  for(; W <= 1140; W += 60){
+    wrap.style.width = W + 'px';
+    if(wrap.offsetHeight <= W * ONE_PAGE_RATIO) return W;
+  }
+  return 1140;
+}
 
 // Copy the live form's current state (checks, values, text) onto a cloned copy of it
 function syncFormState(srcRoot, dstRoot){
@@ -1859,90 +1882,43 @@ async function buildPrintFrame(){
   return iframe;
 }
 
-// ---- PDF generation: US Letter, 0.5in margins ----
-// Page 1 = build sheet. Page 2 = "Customer & Order Info" + everything below it.
-// Each is rendered as its own picture (the page break is explicit, never measured or guessed).
+// ---- PDF generation: ONE US Letter page, 0.5in margins ----
 async function buildPdf(subject){
-  const CAP = 2;                                   // canvas pixels per CSS pixel
+  const CAP = 2.5;                                 // canvas pixels per CSS pixel
   const iframe = await buildPrintFrame();
-  let canvas1, canvas2, breaks = [];
+  let canvas;
   try {
     const d = iframe.contentDocument;
     const wrap = d.querySelector('.wrap');
-    const shoot = async cls => {
-      d.body.classList.remove('pdf-p1', 'pdf-p2');
-      d.body.classList.add(cls);
-      await new Promise(r => setTimeout(r, 60));
-      const H = wrap.scrollHeight;
-      iframe.style.height = (H + 20) + 'px';
-      await new Promise(r => setTimeout(r, 60));
-      return html2canvas(wrap, {
-        backgroundColor: '#ffffff',
-        scale: CAP,
-        useCORS: true,
-        width: 720,
-        height: H,
-        windowWidth: 720,
-        windowHeight: H + 20,
-        scrollX: 0,
-        scrollY: 0,
-      });
-    };
-    // Page 1: everything except Customer & Order Info
-    d.body.classList.add('pdf-p1');
-    await new Promise(r => setTimeout(r, 60));
-    const top = wrap.getBoundingClientRect().top;
-    d.querySelectorAll('.model-panel.active .calc-section').forEach(sec => {
-      if(sec.classList.contains('print-hide')) return;
-      const y = Math.round((sec.getBoundingClientRect().top - top) * CAP);
-      if(y > 0) breaks.push(y);      // spots where page 1 may break if it ever needs more than one page
+    const W = fitOnePageWidth(wrap);
+    wrap.style.width = W + 'px';
+    iframe.style.width = W + 'px';
+    await new Promise(r => setTimeout(r, 100));
+    const H = wrap.scrollHeight;
+    iframe.style.height = (H + 20) + 'px';
+    await new Promise(r => setTimeout(r, 100));
+    canvas = await html2canvas(wrap, {
+      backgroundColor: '#ffffff',
+      scale: CAP,
+      useCORS: true,
+      width: W,
+      height: H,
+      windowWidth: W,
+      windowHeight: H + 20,
+      scrollX: 0,
+      scrollY: 0,
     });
-    canvas1 = await shoot('pdf-p1');
-    // Page 2: only Customer & Order Info, totals, quantity, order total
-    canvas2 = await shoot('pdf-p2');
   } finally {
     iframe.remove();
   }
 
-  const slice = (canvas, y0, y1) => {
-    const h = Math.max(y1 - y0, 1);
-    const c = document.createElement('canvas');
-    c.width = canvas.width; c.height = h;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, c.width, h);
-    ctx.drawImage(canvas, 0, y0, canvas.width, h, 0, 0, canvas.width, h);
-    return c;
-  };
-
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter', compress: true });
-  const M = 36;                                   // 0.5in margins on every side
+  const M = 36;                                    // 0.5in margins on every side
   const boxW = doc.internal.pageSize.getWidth() - 2*M;    // 540pt
   const boxH = doc.internal.pageSize.getHeight() - 2*M;   // 720pt
-  const s0 = boxW / canvas1.width;                // pt per canvas px: full printable width, readable text
-  const capPx = Math.floor(boxH / s0);            // canvas px that fit on one page at that scale
-
-  // Page 1 content (normally one page). Only if it is genuinely too long, spill to extra pages at section boundaries.
-  const pages = [];
-  let y = 0;
-  const total1 = canvas1.height;
-  const MAX_SHRINK = 1.28;                        // page 1 may shrink up to ~22% (still legible) before spilling over
-  while(total1 - y > capPx * MAX_SHRINK){
-    const cand = breaks.filter(b => b > y && b <= y + capPx);
-    const cut = cand.length ? cand[cand.length - 1] : y + capPx;
-    pages.push(slice(canvas1, y, cut));
-    y = cut;
-  }
-  pages.push(slice(canvas1, y, total1));
-  // Customer & Order Info page: always on a fresh page
-  pages.push(canvas2);
-
-  pages.forEach((c, i) => {
-    if(i > 0) doc.addPage();
-    const sc = Math.min(s0, boxH / c.height);     // shrink only if a single page would overflow
-    doc.addImage(c.toDataURL('image/jpeg', 0.85), 'JPEG', M, M, c.width * sc, c.height * sc);
-  });
+  const sc = Math.min(boxW / canvas.width, boxH / canvas.height);
+  doc.addImage(canvas.toDataURL('image/jpeg', 0.88), 'JPEG', M, M, canvas.width * sc, canvas.height * sc);
 
   const safeName = subject.replace(/[^\w\-]+/g, '_').slice(0, 80);
   return { doc, fileName: `${safeName}.pdf` };
@@ -2194,7 +2170,7 @@ copyBtn.addEventListener('click', function(){
 <script>
 // Tells people on an old cached copy (e.g. a tab left open on a phone) to refresh
 (function(){
-  const BUILD = '2026-10-01.4';
+  const BUILD = '2026-10-01.5';
   const bar = document.getElementById('updateBar');
   bar.addEventListener('click', () => location.reload());
   async function check(){
