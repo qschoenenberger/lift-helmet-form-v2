@@ -1356,7 +1356,7 @@
     </div>
   </form>
 
-  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.5</span></footer>
+  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.6</span></footer>
 </div>
 
 <script>
@@ -1784,6 +1784,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 </script>
 <script>
 const DEST_EMAIL = "cs@liftaviationusa.com";
+const BUILD_ID = '2026-10-01.6';
 
 // ---- Print / PDF layout: US Letter, 2 pages ----
 // Page 1 = selected build items. Page 2 = customer info + totals (always starts a new page).
@@ -1919,6 +1920,11 @@ async function buildPdf(subject){
   const boxH = doc.internal.pageSize.getHeight() - 2*M;   // 720pt
   const sc = Math.min(boxW / canvas.width, boxH / canvas.height);
   doc.addImage(canvas.toDataURL('image/jpeg', 0.88), 'JPEG', M, M, canvas.width * sc, canvas.height * sc);
+  // Tiny version stamp in the bottom margin (shows which form version made the file)
+  doc.setFontSize(6); doc.setTextColor(150);
+  doc.text(`Build ${BUILD_ID}`, M, doc.internal.pageSize.getHeight() - 18);
+  // Guarantee: the attachment is ONE page, always
+  while(doc.getNumberOfPages() > 1) doc.deletePage(doc.getNumberOfPages());
 
   const safeName = subject.replace(/[^\w\-]+/g, '_').slice(0, 80);
   return { doc, fileName: `${safeName}.pdf` };
@@ -2170,14 +2176,14 @@ copyBtn.addEventListener('click', function(){
 <script>
 // Tells people on an old cached copy (e.g. a tab left open on a phone) to refresh
 (function(){
-  const BUILD = '2026-10-01.5';
+  const BUILD = BUILD_ID;
   const bar = document.getElementById('updateBar');
   bar.addEventListener('click', () => location.reload());
   async function check(){
     if(!/^https?:$/.test(location.protocol)) return;
     try {
       const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
-      const m = (await r.text()).match(/const BUILD = '([^']+)'/);
+      const m = (await r.text()).match(/const BUILD_ID = '([^']+)'/);
       if(m && m[1] !== BUILD) bar.classList.add('show');
     } catch(e) {}
   }
