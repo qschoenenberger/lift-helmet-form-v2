@@ -303,8 +303,10 @@
   body.print-layout .rep-row{margin-top:8px;}
   body.print-layout .calc-section{margin-bottom:12px;break-inside:avoid;}
   body.print-layout .section-head{margin-bottom:6px;}
+  body.print-layout .subgroup-label{margin:4px 0 0;padding-top:4px;}
+  body.print-layout .calc-section{margin-bottom:10px;}
   body.print-layout .item-grid{gap:4px;}
-  body.print-layout .item-row{padding:5px 9px;cursor:default;break-inside:avoid;}
+  body.print-layout .item-row{padding:4px 9px;cursor:default;break-inside:avoid;}
   body.print-layout .info-section{margin-top:0;padding-top:0;border-top:none;break-before:page;page-break-before:always;}
   body.print-layout .field{margin-bottom:8px;}
   body.print-layout .grid2{gap:8px 14px;}
@@ -313,6 +315,9 @@
   body.print-layout .totals-row{padding:5px 0;}
   body.print-layout .totals-row.grand{font-size:22px;padding-top:10px;}
   body.print-layout .totals-row.order-total{font-size:20px;}
+  /* PDF frame only: each PDF page is rendered on its own, so the page break needs no measuring */
+  body.pdf-p1 .info-section{display:none !important;}
+  body.pdf-p2 header.masthead, body.pdf-p2 .model-panel{display:none !important;}
   /* keep the desktop column layout in print/PDF even when the screen is narrow */
   body.print-layout .item-grid.cols-2{grid-template-columns:1fr 1fr;}
   body.print-layout .item-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
@@ -1329,7 +1334,7 @@
     </div>
   </form>
 
-  <footer>LIFT Aviation — Build Your Helmet Form</footer>
+  <footer>LIFT Aviation — Build Your Helmet Form <span style="opacity:.6">· build 2026-10-01.3</span></footer>
 </div>
 
 <script>
@@ -1842,41 +1847,52 @@ async function buildPrintFrame(){
   return iframe;
 }
 
-// ---- PDF generation: US Letter, 0.5in margins. Page 1 = build sheet, page 2 = Customer & Order Info + totals ----
+// ---- PDF generation: US Letter, 0.5in margins ----
+// Page 1 = build sheet. Page 2 = "Customer & Order Info" + everything below it.
+// Each is rendered as its own picture (the page break is explicit, never measured or guessed).
 async function buildPdf(subject){
   const CAP = 2;                                   // canvas pixels per CSS pixel
   const iframe = await buildPrintFrame();
-  let canvas, splitPx, breaks = [];
+  let canvas1, canvas2, breaks = [];
   try {
     const d = iframe.contentDocument;
     const wrap = d.querySelector('.wrap');
+    const shoot = async cls => {
+      d.body.classList.remove('pdf-p1', 'pdf-p2');
+      d.body.classList.add(cls);
+      await new Promise(r => setTimeout(r, 60));
+      const H = wrap.scrollHeight;
+      iframe.style.height = (H + 20) + 'px';
+      await new Promise(r => setTimeout(r, 60));
+      return html2canvas(wrap, {
+        backgroundColor: '#ffffff',
+        scale: CAP,
+        useCORS: true,
+        width: 720,
+        height: H,
+        windowWidth: 720,
+        windowHeight: H + 20,
+        scrollX: 0,
+        scrollY: 0,
+      });
+    };
+    // Page 1: everything except Customer & Order Info
+    d.body.classList.add('pdf-p1');
+    await new Promise(r => setTimeout(r, 60));
     const top = wrap.getBoundingClientRect().top;
-    const info = d.querySelector('.info-section');
-    splitPx = Math.round((info.getBoundingClientRect().top - top) * CAP);
-    // Places where page 1 may break if it ever needs more than one page (tops of visible sections)
     d.querySelectorAll('.model-panel.active .calc-section').forEach(sec => {
       if(sec.classList.contains('print-hide')) return;
       const y = Math.round((sec.getBoundingClientRect().top - top) * CAP);
-      if(y > 0 && y < splitPx) breaks.push(y);
+      if(y > 0) breaks.push(y);      // spots where page 1 may break if it ever needs more than one page
     });
-    const H = wrap.scrollHeight;
-    iframe.style.height = (H + 20) + 'px';
-    canvas = await html2canvas(wrap, {
-      backgroundColor: '#ffffff',
-      scale: CAP,
-      useCORS: true,
-      width: 720,
-      height: H,
-      windowWidth: 720,
-      windowHeight: H + 20,
-      scrollX: 0,
-      scrollY: 0,
-    });
+    canvas1 = await shoot('pdf-p1');
+    // Page 2: only Customer & Order Info, totals, quantity, order total
+    canvas2 = await shoot('pdf-p2');
   } finally {
     iframe.remove();
   }
 
-  const slice = (y0, y1) => {
+  const slice = (canvas, y0, y1) => {
     const h = Math.max(y1 - y0, 1);
     const c = document.createElement('canvas');
     c.width = canvas.width; c.height = h;
@@ -1892,22 +1908,23 @@ async function buildPdf(subject){
   const M = 36;                                   // 0.5in margins on every side
   const boxW = doc.internal.pageSize.getWidth() - 2*M;    // 540pt
   const boxH = doc.internal.pageSize.getHeight() - 2*M;   // 720pt
-  const s0 = boxW / canvas.width;                 // pt per canvas px: full printable width, readable text
+  const s0 = boxW / canvas1.width;                // pt per canvas px: full printable width, readable text
   const capPx = Math.floor(boxH / s0);            // canvas px that fit on one page at that scale
 
-  // Page 1 content (normally a single page). Only if it is genuinely too long, break at a section boundary.
+  // Page 1 content (normally one page). Only if it is genuinely too long, spill to extra pages at section boundaries.
   const pages = [];
   let y = 0;
-  const MAX_SHRINK = 1.28;                        // page 1 may shrink up to ~22% (still legible) before spilling to an extra page
-  while(splitPx - y > capPx * MAX_SHRINK){
+  const total1 = canvas1.height;
+  const MAX_SHRINK = 1.28;                        // page 1 may shrink up to ~22% (still legible) before spilling over
+  while(total1 - y > capPx * MAX_SHRINK){
     const cand = breaks.filter(b => b > y && b <= y + capPx);
     const cut = cand.length ? cand[cand.length - 1] : y + capPx;
-    pages.push(slice(y, cut));
+    pages.push(slice(canvas1, y, cut));
     y = cut;
   }
-  pages.push(slice(y, splitPx));
-  // Customer & Order Info + totals: always begins on a fresh page
-  pages.push(slice(splitPx, canvas.height));
+  pages.push(slice(canvas1, y, total1));
+  // Customer & Order Info page: always on a fresh page
+  pages.push(canvas2);
 
   pages.forEach((c, i) => {
     if(i > 0) doc.addPage();
